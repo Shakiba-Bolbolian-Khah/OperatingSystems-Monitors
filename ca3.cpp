@@ -9,8 +9,30 @@
 #include <time.h>
 #include <semaphore.h>
 #include <pthread.h>
+#include <math.h>
+#include <chrono>
+#include <ctime>
 
 using namespace std;
+
+
+class PollutionMonitor{
+    private:
+        long int totalPollution;
+        sem_t available;
+    public:
+        PollutionMonitor(){
+            totalPollution = 0;
+            sem_init(&available, 0, 1);
+        }
+        long int getTotalPollution(){ return totalPollution;}
+        long int calTotalPollution(long int newPollution){
+            sem_wait(&available);
+            totalPollution += newPollution;
+            sem_post(&available);
+            return totalPollution;
+        }
+};
 
 class PathMonitor{
     private:
@@ -29,34 +51,27 @@ class PathMonitor{
         string getStart(){ return start;}
         string getEnd(){ return end;}
 
-        double passPath(int p){
+        vector <string> passPath(int p, PollutionMonitor &pollutionMonitor){
             sem_wait(&isEmpty);
-            double pollution = 0;
+            chrono::milliseconds entranceTime = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
+            vector <string> pollutions;
+            long int pollution = 0;
             for( long int i = 0;i < 10000000; i++ ){
                 pollution += i / (1000000 * p * h);
             }
+            pollutions.push_back(to_string(entranceTime.count()));
+            pollutions.push_back(to_string(pollution));
+            pollutions.push_back(to_string(pollutionMonitor.calTotalPollution(pollution)));
+            chrono::milliseconds exitTime = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
+            pollutions.push_back(to_string(exitTime.count()));
             sem_post(&isEmpty);
-            return pollution;
+            return pollutions;
         }
 
 };
 
 
-class PollutionMonitor{
-    private:
-        double totalPollution;
-        sem_t available;
-    public:
-        PollutionMonitor(){
-            totalPollution = 0;
-            sem_init(&available, 0, 1);
-        }
-        void calTotalPollution(double newPollution){
-            sem_wait(&available);
-            totalPollution += newPollution;
-            sem_post(&available);
-        }
-};
+
 
 vector <char*> split(string str,const char* delimeter){
     vector<char*> strToks;
@@ -72,21 +87,23 @@ vector <char*> split(string str,const char* delimeter){
     return strToks;
 }
 
-int findPath( vector<vector<string>  > input, char* start, char* end){
-    for(int i = 0; i< input.size(); i++){
-        if(input[i][0] == start && input[i][1] == end )
-            return atoi(input[i][2].c_str());
+int findPathMonitor(vector<PathMonitor> &pathMonitors, string start, string end){
+    for( int i = 0; i < pathMonitors.size(); i++){
+        if( (pathMonitors[i].getEnd() == end) && (pathMonitors[i].getStart() == start))
+            return i;
     }
-    return -1;
+    cout << "No path with start: " << start << " and end: " << end << " had been found!" << endl;
+    exit(0);
 }
 
-void driveCar( int carNumber, int &p, vector<string> &carPath, vector<PathMonitor> &pathMonitors, PollutionMonitor &pollutionMonitor){
-    cout << "here   " << carNumber << endl;
-    this_thread::sleep_for(std::chrono::milliseconds(200));
-    time_t my_time = time(NULL);
-    printf("%s", ctime(&my_time));
-
-    // for();
+void driveCar( int pathNum, int carNumber, int p, vector<string> carPath, vector<PathMonitor> &pathMonitors, PollutionMonitor &pollutionMonitor){
+    std::ofstream outfile (to_string(pathNum)+"-"+ to_string(carNumber)+".txt");
+    for( int i = 0; i< carPath.size()-1; i++){
+        int pmNum = findPathMonitor( pathMonitors, carPath[i], carPath[i+1]);
+        vector<string> pollutions = pathMonitors[pmNum].passPath(p, pollutionMonitor);
+        outfile << carPath[i] <<", " << pollutions[0] << ", " << carPath[i+1] << ", " << pollutions[3] << ", " << pollutions[1] << ", " << pollutions[2] << endl;
+    }
+    outfile.close();
 
 }
 
@@ -124,7 +141,7 @@ int main(int argc, char* argv[]){
         numOfCars.push_back(atoi(str.c_str()));
     }
 
-    int carNumber = 0;
+
     vector< PathMonitor> pathMonitors;
     PollutionMonitor pollutionMonitor;
     vector< thread> carThreads;
@@ -137,12 +154,12 @@ int main(int argc, char* argv[]){
 
 
     for(int i = 0;i< cars.size();i++){
+
         for( int j =0; j < numOfCars[i]; j++){
-            int p = rand() % 10;
-            cout << "p:  " <<p << endl;
-            thread carThread(driveCar, ref(carNumber), ref(p), ref(cars[i]), ref(pathMonitors), ref(pollutionMonitor));
+            
+            int p = rand() % 10 + 1;
+            thread carThread(driveCar,i+1, j+1, p, cars[i], ref(pathMonitors), ref(pollutionMonitor));
             carThreads.push_back(move(carThread));
-            carNumber++;
         }
     }
     for( int i = 0; i < carThreads.size(); i++)
